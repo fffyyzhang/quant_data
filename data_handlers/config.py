@@ -1,0 +1,1 @@
+DIR_DATA='/Users/liyuan/data/quant/raw'     #macbook开发机
