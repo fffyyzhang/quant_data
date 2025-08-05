@@ -29,6 +29,14 @@ def get_hist_bar(**kwargs):
     wait=wait_exponential(multiplier=1, min=2, max=10),  # 指数退避：2秒->4秒->8秒，最大10秒
     reraise=True  # 失败时重新抛出原始异常
 )
+def pro_bar(**kwargs):
+    return ts.pro_bar(**kwargs)
+
+@retry(
+    stop=stop_after_attempt(3),  # 最多重试3次
+    wait=wait_exponential(multiplier=1, min=2, max=10),  # 指数退避：2秒->4秒->8秒，最大10秒
+    reraise=True  # 失败时重新抛出原始异常
+)
 def get_etf_daily(**kwargs):
     return pro.fund_daily(**kwargs)
 
@@ -68,48 +76,27 @@ class HandlerTushareBar:
                  time_freq=None,
                  api_limit=None,
                  fnc_info=None,
-                 fnc_data=None
+                 fnc_data=None,
+                 asset=None
                  ):
 
-        self.data_dir = data_dir
-        self.fq= fq
-        self.time_freq = time_freq
-        self.api_limit=api_limit # 每次请求最多获取数据条数限制
-        self.fnc_info=fnc_info #必须返回ts_code和name两个字段
-        self.fnc_data=fnc_data #必须返回DataFrame
-        
-        # 确保数据目录存在
-        os.makedirs(self.data_dir, exist_ok=True)
-        
-        # 记录无数据的ts_code
-        self.no_data_list = []
+        vars(self).update({k: v for k, v in locals().items() if k != 'self'})
+        os.makedirs(self.data_dir, exist_ok=True)  # 确保数据目录存在
+        self.no_data_list = [] # 记录无数据的ts_code
 
     def get_batch_size(self):
         """
-            根据每次调用api的返回数量限制，计算每次能够fetch多少个日期的数据
+            换算成每次最多可以fetch多少个整天的数据，不超过api limit
         """
         if not self.time_freq or self.time_freq == 'D':
             return self.api_limit
-        else:   
-            match_obj=re.match(r'(\d+)', self.time_freq)
-            if match_obj:
-                return self.api_limit // int(match_obj.group(1))
-            else:
-                print(f"频率 {self.time_freq} 不合法")
-                return self.api_limit
+        elif match_obj:=re.match(r'(\d+)min', self.time_freq): # 分钟频率
+            f=int(match_obj.group(1))
+            return self.api_limit*f // 270 # 270是每天的总交易分钟数
+        else: 
+            print(f"频率 {self.time_freq} 不合法")
+            return self.api_limit
     
-    def get_file_path(self, ts_code):
-        """
-        根据ts_code生成对应的文件路径
-        """
-        filename = f"{ts_code}.csv"
-        return os.path.join(self.data_dir, filename)
-    
-    def get_no_data_file_path(self):
-        """
-        获取无数据记录文件的路径
-        """
-        return os.path.join(self.data_dir, 'no_data_symbols.txt')
     
     def save_no_data_list(self, start_date, end_date):
         """
@@ -119,7 +106,7 @@ class HandlerTushareBar:
             print("没有发现无数据的标的")
             return
             
-        no_data_file = self.get_no_data_file_path()
+        no_data_file = os.path.join(self.data_dir, 'no_data_symbols.txt')
         with open(no_data_file, 'w', encoding='utf-8') as f:
             f.write(f"# 无数据标的列表 (时间段: {start_date} ~ {end_date})\n")
             f.write(f"# 生成时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -151,7 +138,7 @@ class HandlerTushareBar:
         #tushare复权数据没有按照日期获取全量数据的功能，只能先按照股票列表循环
         stock_info = self.fnc_info()
         for i, (ts_code, stock_name) in enumerate(stock_info.values):
-            file_path = self.get_file_path(ts_code)
+            file_path = os.path.join(self.data_dir, f"{ts_code}.csv")
             has_data = False  # 标记该ts_code是否有任何数据
             
             # 如果refresh=True，删除已存在的文件
@@ -170,6 +157,8 @@ class HandlerTushareBar:
                     other_kwargs['freq']=self.time_freq
                 if self.fq:
                     other_kwargs['adj']=self.fq
+                if self.asset:
+                    other_kwargs['asset']=self.asset
                 
                 try:    
                     df = self.fnc_data(
@@ -226,11 +215,26 @@ if __name__ == "__main__":
     # handler_stock_daily.get_all_data(start_date='20150101', end_date='20250710', refresh=True)
     
     # ETF日线数据示例
-    handler_etf_daily = HandlerTushareBar(
-        data_dir=os.path.join(DIR_DATA, 'etf_daily'),
-        api_limit=2000,
-        fnc_info=get_all_etf_info,
-        fnc_data=get_etf_daily
-    )
+    # handler_etf_daily = HandlerTushareBar(
+    #     data_dir=os.path.join(DIR_DATA, 'etf_daily'),
+    #     api_limit=2000,
+    #     fnc_info=get_all_etf_info,
+    #     fnc_data=get_etf_daily
+    # )
 
-    handler_etf_daily.get_all_data(start_date='20140101', end_date='20250720', refresh=True)
+    # handler_etf_daily.get_all_data(start_date='20140101', end_date='20250720', refresh=True)
+
+
+    #ETF分钟线数据示例
+    handler_etf_5min = HandlerTushareBar(
+        data_dir=os.path.join(DIR_DATA, 'etf_5min'),
+        api_limit=8000,
+        fnc_info=get_all_etf_info,
+        fnc_data=pro_bar,
+        time_freq='5min',
+        fq='hfq',
+        asset='FD'
+    )
+    #print(handler_etf_5min.get_batch_size())
+
+    handler_etf_5min.get_all_data(start_date='20140101', end_date='20250803', refresh=True)
