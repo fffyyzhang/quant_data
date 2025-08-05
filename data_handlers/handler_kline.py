@@ -148,9 +148,9 @@ class HandlerTushareBar:
             
             # 切分时间片分批获取数据
             for start_idx in range(0, len(trade_dates), batch_size):
-                end_idx = min(start_idx + batch_size-1, len(trade_dates)-1)
+                end_idx = min(start_idx + batch_size, len(trade_dates)-1)
                 start_date_batch, end_date_batch = trade_dates[start_idx], trade_dates[end_idx]
-                print(f"正在获取{i+1}/{len(stock_info)} {stock_name}({ts_code}) 从{start_date_batch} 到 {end_date_batch} 的数据...")
+                print(f"正在获取{i+1}/{len(stock_info)} {stock_name}({ts_code}) [{start_date_batch} , {end_date_batch} )的数据...")
                 
                 other_kwargs={}
                 if self.time_freq:
@@ -196,9 +196,6 @@ class HandlerTushareBar:
         
         # 保存无数据列表
         self.save_no_data_list(start_date, end_date)
-
-
-
 
 
 
