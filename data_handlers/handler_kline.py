@@ -40,6 +40,19 @@ def pro_bar(**kwargs):
 def get_etf_daily(**kwargs):
     return pro.fund_daily(**kwargs)
 
+#获取复权因子
+@retry(
+    stop=stop_after_attempt(3),  # 最多重试3次
+    wait=wait_exponential(multiplier=1, min=2, max=10),  # 指数退避：2秒->4秒->8秒，最大10秒
+    reraise=True  # 失败时重新抛出原始异常
+)
+def get_adj_factor(**kwargs):
+    return pro.fund_adj(**kwargs)
+
+
+
+
+
 
 
 def get_trade_dates(start_date, end_date):
@@ -69,7 +82,9 @@ class HandlerTushareBar:
         api_limit: 每次请求最多获取数据条数限制
         fnc_info: 获取所有股票信息的函数，默认get_all_stock_info,必须返回ts_code和name两个字段
         fnc_data: 获取数据的函数，必须返回DataFrame
-    '''
+        asset: 资产类型，默认None,适配pro_bar的参数
+        force_adj: 是否强制获取复权因子，默认False
+    ''' 
     def __init__(self,
                  data_dir, 
                  fq=None, 
@@ -77,12 +92,16 @@ class HandlerTushareBar:
                  api_limit=None,
                  fnc_info=None,
                  fnc_data=None,
-                 asset=None
+                 fnc_adj=None, #获取复权因子的函数，默认None,适配pro_bar的参数
+                 asset=None,
+                 force_adj=False #是否强制获取复权因子，默认False
                  ):
-
+        if force_adj and not fnc_adj:
+            raise ValueError("force_adj为True时，必须提供fnc_adj函数")
         vars(self).update({k: v for k, v in locals().items() if k != 'self'})
         os.makedirs(self.data_dir, exist_ok=True)  # 确保数据目录存在
         self.no_data_list = [] # 记录无数据的ts_code
+        self.adj_error_list = [] # 记录复权错误的ts_code
 
     def get_batch_size(self):
         """
@@ -117,6 +136,26 @@ class HandlerTushareBar:
         
         print(f"无数据标的列表已保存到: {no_data_file}")
         print(f"共计 {len(self.no_data_list)} 个标的无数据")
+    
+    def save_adj_error_list(self, start_date, end_date):
+        """
+        将复权错误的ts_code列表保存到文件
+        """
+        if not self.adj_error_list:
+            print("没有发现复权错误的标的")
+            return
+            
+        adj_error_file = os.path.join(self.data_dir, 'adj_error_symbols.txt')
+        with open(adj_error_file, 'w', encoding='utf-8') as f:
+            f.write(f"# 复权错误标的列表 (时间段: {start_date} ~ {end_date})\n")
+            f.write(f"# 生成时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"# 总计: {len(self.adj_error_list)} 个标的\n\n")
+            
+            for item in self.adj_error_list:
+                f.write(f"{item['ts_code']}\t{item['name']}\t{item['reason']}\n")
+        
+        print(f"复权错误标的列表已保存到: {adj_error_file}")
+        print(f"共计 {len(self.adj_error_list)} 个标的复权错误")
                 
 
     def get_all_data(self, **kwargs):
@@ -127,8 +166,9 @@ class HandlerTushareBar:
         end_date=kwargs.get('end_date')
         refresh=kwargs.get('refresh',False)
         
-        # 重置无数据列表
+        # 重置无数据列表和复权错误列表
         self.no_data_list = []
+        self.adj_error_list = []
         
         trade_dates = get_trade_dates(start_date, end_date)
         print(f"共找到 {len(trade_dates)} 个交易日，开始获取数据...")
@@ -167,11 +207,53 @@ class HandlerTushareBar:
                             end_date=end_date_batch,
                             **other_kwargs
                         )
+                    
 
                     if df is not None and not df.empty: # 如果数据不为空，则保存到文件
                         df['stock_name'] = stock_name
                         df['ts_code'] = ts_code
                         df.rename(columns={'vol':'volume'}, inplace=True)
+                        
+                        # 强制复权处理
+                        if self.force_adj :
+                            
+                            # 获取复权因子
+                            adj_df = self.fnc_adj(
+                                ts_code=ts_code,
+                                start_date=start_date_batch,
+                                end_date=end_date_batch
+                            )
+                            
+                            if adj_df is not None and not adj_df.empty:
+                                # 保存原始close为close_raw
+                                df['close_raw'] = df['close']
+                                
+                                # 合并复权因子数据
+                                df = df.merge(adj_df[['trade_date', 'adj_factor']], on='trade_date', how='left')
+                                
+                                # 检查是否有缺失的复权因子
+                                if df['adj_factor'].isna().any():
+                                    missing_dates = df[df['adj_factor'].isna()]['trade_date'].tolist()
+                                    print(f"  错误: {ts_code} 在以下日期缺失复权因子: {missing_dates}")
+                                    self.adj_error_list.append({
+                                        'ts_code': ts_code,
+                                        'name': stock_name,
+                                        'reason': f'缺失复权因子，日期: {missing_dates}'
+                                    })
+                                    continue
+                                
+                                # 应用复权因子计算新的close价格
+                                df['close'] = df['close'] * df['adj_factor']
+                                print(f"  已应用复权因子到 {ts_code} 的close价格")
+                            else:
+                                print(f"  错误: 无法获取 {ts_code} 的复权因子数据")
+                                self.adj_error_list.append({
+                                    'ts_code': ts_code,
+                                    'name': stock_name,
+                                    'reason': '无法获取复权因子数据'
+                                })
+                                continue
+                                                     
                         print(f"  获取到 {len(df)} 条数据，保存到 {file_path}")
                         
                         # 检查文件是否存在，决定是否写入header
@@ -194,8 +276,9 @@ class HandlerTushareBar:
                 })
                 print(f"警告: {stock_name}({ts_code}) 在整个时间段内都无数据")
         
-        # 保存无数据列表
+        # 保存无数据列表和复权错误列表
         self.save_no_data_list(start_date, end_date)
+        self.save_adj_error_list(start_date, end_date)
 
 
 
@@ -212,26 +295,28 @@ if __name__ == "__main__":
     # handler_stock_daily.get_all_data(start_date='20150101', end_date='20250710', refresh=True)
     
     # ETF日线数据示例
-    # handler_etf_daily = HandlerTushareBar(
-    #     data_dir=os.path.join(DIR_DATA, 'etf_daily'),
-    #     api_limit=2000,
-    #     fnc_info=get_all_etf_info,
-    #     fnc_data=get_etf_daily
-    # )
+        handler_etf_daily = HandlerTushareBar(
+            data_dir=os.path.join(DIR_DATA, 'etf_daily'),
+            api_limit=2000,
+            fnc_info=get_all_etf_info,
+            fnc_data=get_etf_daily,
+            force_adj=True,
+            fnc_adj=get_adj_factor
+        )
 
-    # handler_etf_daily.get_all_data(start_date='20140101', end_date='20250720', refresh=True)
+        handler_etf_daily.get_all_data(start_date='20140101', end_date='20250720', refresh=True)
 
 
     #ETF分钟线数据示例
-    handler_etf_5min = HandlerTushareBar(
-        data_dir=os.path.join(DIR_DATA, 'etf_5min'),
-        api_limit=8000,
-        fnc_info=get_all_etf_info,
-        fnc_data=pro_bar,
-        time_freq='5min',
-        fq='hfq',
-        asset='FD'
-    )
+    # handler_etf_5min = HandlerTushareBar(
+    #     data_dir=os.path.join(DIR_DATA, 'etf_30min'),
+    #     api_limit=8000,
+    #     fnc_info=get_all_etf_info,
+    #     fnc_data=pro_bar,
+    #     time_freq='30min',
+    #     fq='hfq',
+    #     asset='FD'
+    # )
     #print(handler_etf_5min.get_batch_size())
 
-    handler_etf_5min.get_all_data(start_date='20140101', end_date='20250803', refresh=True)
+    #handler_etf_5min.get_all_data(start_date='20140101', end_date='20250803', refresh=True)
