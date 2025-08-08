@@ -111,3 +111,6 @@ trades/
 models/
 *.pkl
 *.joblib
+
+
+nohup.out
