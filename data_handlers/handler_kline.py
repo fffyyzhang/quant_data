@@ -1,6 +1,7 @@
 import tushare as ts
 import pandas as pd
 import os,re,sys,time
+from datetime import datetime, timedelta
 from tenacity import retry, stop_after_attempt, wait_exponential
 import logging
 from config import DIR_DATA
@@ -9,7 +10,10 @@ from config import DIR_DATA
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-ts.set_token('b9b26e60eb1a7ffb3578ae28d43d113c63be23d63b13a9feea0340f4')  # 替换为实际Token
+_TS_TOKEN = os.getenv('TS_TOKEN')
+if not _TS_TOKEN:
+    raise RuntimeError("环境变量 TS_TOKEN 未设置，请先在系统中导出 TS_TOKEN 再运行程序")
+ts.set_token(_TS_TOKEN)
 pro = ts.pro_api()
 
 import warnings
@@ -69,6 +73,14 @@ def get_all_etf_info():
     df_etf_info = pro.etf_basic(list_status='L', fields='ts_code,extname,index_code,index_name,exchange,mgr_name,list_date')
     return df_etf_info[['ts_code','extname']].rename(columns={'extname':'name'})
 
+
+
+def _next_day(date_str: str) -> str:
+    if not date_str:
+        return date_str
+    s = str(date_str).replace('-', '')
+    d = datetime.strptime(s, '%Y%m%d')
+    return (d + timedelta(days=1)).strftime('%Y%m%d')
 
 
 class HandlerTushareBar:
@@ -163,7 +175,7 @@ class HandlerTushareBar:
         获取A股所有股票的复权K线数据，每个ts_code保存为单独的文件
         """
         start_date=kwargs.get('start_date')
-        end_date=kwargs.get('end_date')
+        end_date=kwargs.get('end_date') or time.strftime('%Y%m%d')
         refresh=kwargs.get('refresh',False)
         
         # 重置无数据列表和复权错误列表
@@ -186,11 +198,29 @@ class HandlerTushareBar:
                 os.remove(file_path)
                 print(f"删除已存在文件: {file_path}")
             
-            # 切分时间片分批获取数据
-            for start_idx in range(0, len(trade_dates), batch_size):
-                end_idx = min(start_idx + batch_size, len(trade_dates)-1)
-                start_date_batch, end_date_batch = trade_dates[start_idx], trade_dates[end_idx]
-                print(f"正在获取{i+1}/{len(stock_info)} {stock_name}({ts_code}) [{start_date_batch} , {end_date_batch} )的数据...")
+            # 增量：若文件已存在且未 refresh，则仅请求最后日期之后的区间
+            last_date = None
+            symbol_trade_dates = trade_dates
+            if (not refresh) and os.path.exists(file_path):
+                try:
+                    df_dates = pd.read_csv(file_path, usecols=['trade_date'])
+                    if df_dates is not None and not df_dates.empty:
+                        last_date = str(df_dates['trade_date'].max()).replace('-', '')
+                        symbol_trade_dates = [d for d in trade_dates if d >= last_date]
+                        if len(symbol_trade_dates) <= 1:
+                            print(f"{stock_name}({ts_code}) 已是最新，无需更新")
+                            continue
+                        else:
+                            print(f"增量更新 {stock_name}({ts_code}) 从 {symbol_trade_dates[0]} 起，共 {len(symbol_trade_dates)} 个交易日")
+                except Exception as e:
+                    print(f"读取历史最大 trade_date 失败，将按全量区间处理: {e}")
+
+            # 切分时间片分批获取数据（针对该标的的实际日期范围）
+            for start_idx in range(0, len(symbol_trade_dates), batch_size):
+                end_idx = min(start_idx + batch_size, len(symbol_trade_dates)-1)
+                start_date_batch, end_date_inclusive = symbol_trade_dates[start_idx], symbol_trade_dates[end_idx]
+                end_date_exclusive = _next_day(end_date_inclusive)
+                print(f"正在获取{i+1}/{len(stock_info)} {stock_name}({ts_code}) [{start_date_batch} , {end_date_exclusive} )的数据...")
                 
                 other_kwargs={}
                 if self.time_freq:
@@ -204,12 +234,19 @@ class HandlerTushareBar:
                     df = self.fnc_data(
                             ts_code=ts_code, 
                             start_date=start_date_batch,
-                            end_date=end_date_batch,
+                            end_date=end_date_exclusive,
                             **other_kwargs
                         )
                     
 
                     if df is not None and not df.empty: # 如果数据不为空，则保存到文件
+                        # 若为增量模式，过滤掉历史已存在日期（含 last_date 当日）
+                        if last_date is not None and 'trade_date' in df.columns:
+                            df = df[df['trade_date'].astype(str).str.replace('-', '') > last_date]
+                            if df.empty:
+                                print(f"  本批次全为历史数据，跳过保存")
+                                time.sleep(0.1)
+                                continue
                         df['stock_name'] = stock_name
                         df['ts_code'] = ts_code
                         df.rename(columns={'vol':'volume'}, inplace=True)
@@ -221,7 +258,7 @@ class HandlerTushareBar:
                             adj_df = self.fnc_adj(
                                 ts_code=ts_code,
                                 start_date=start_date_batch,
-                                end_date=end_date_batch
+                                end_date=end_date_exclusive
                             )
                             
                             if adj_df is not None and not adj_df.empty:
@@ -230,8 +267,11 @@ class HandlerTushareBar:
                                 
                                 # 合并复权因子数据
                                 df = df.merge(adj_df[['trade_date', 'adj_factor']], on='trade_date', how='left')
-                                
-                                # 检查是否有缺失的复权因子
+                                # 为确保“最近”插补逻辑按时间顺序执行，按日期升序排序
+                                df.sort_values('trade_date', inplace=True)
+                                df.reset_index(drop=True, inplace=True)
+
+                                # 检查是否有缺失的复权因子；若有，记录并用最近有效值插补
                                 if df['adj_factor'].isna().any():
                                     missing_dates = df[df['adj_factor'].isna()]['trade_date'].tolist()
                                     print(f"  错误: {ts_code} 在以下日期缺失复权因子: {missing_dates}")
@@ -240,11 +280,20 @@ class HandlerTushareBar:
                                         'name': stock_name,
                                         'reason': f'缺失复权因子，日期: {missing_dates}'
                                     })
+
+                                    # 使用最近有效值（前后均可）的插补方式；两端也进行补全
+                                    df['adj_factor'] = pd.to_numeric(df['adj_factor'], errors='coerce')
+                                    df['adj_factor'] = df['adj_factor'].interpolate(method='nearest', limit_direction='both')
+
+                                # 若插补后仍存在缺失（例如整个区间都没有有效因子），则跳过该批次
+                                if df['adj_factor'].isna().any():
+                                    remaining_missing = df[df['adj_factor'].isna()]['trade_date'].tolist()
+                                    print(f"  错误: {ts_code} 插补后仍缺失复权因子，日期: {remaining_missing}，跳过该批次")
                                     continue
-                                
+
                                 # 应用复权因子计算新的close价格
                                 df['close'] = df['close'] * df['adj_factor']
-                                print(f"  已应用复权因子到 {ts_code} 的close价格")
+                                print(f"  已应用复权因子到 {ts_code} 的close价格（含最近值插补处理）")
                             else:
                                 print(f"  错误: 无法获取 {ts_code} 的复权因子数据")
                                 self.adj_error_list.append({
@@ -295,16 +344,16 @@ if __name__ == "__main__":
     # handler_stock_daily.get_all_data(start_date='20150101', end_date='20250710', refresh=True)
     
     # ETF日线数据示例
-        handler_etf_daily = HandlerTushareBar(
-            data_dir=os.path.join(DIR_DATA, 'etf_daily'),
-            api_limit=2000,
-            fnc_info=get_all_etf_info,
-            fnc_data=get_etf_daily,
-            force_adj=True,
-            fnc_adj=get_adj_factor
-        )
+    handler_etf_daily = HandlerTushareBar(
+        data_dir=os.path.join(DIR_DATA, 'etf_daily'),
+        api_limit=2000,
+        fnc_info=get_all_etf_info,
+        fnc_data=get_etf_daily,
+        force_adj=True,
+        fnc_adj=get_adj_factor
+    )
 
-        handler_etf_daily.get_all_data(start_date='20140101', end_date='20250720', refresh=True)
+    handler_etf_daily.get_all_data(start_date='20140101', end_date=None, refresh=True) #end_date=None表示获取最新数据
 
 
     #ETF分钟线数据示例
