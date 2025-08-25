@@ -20,13 +20,10 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-@retry(
-    stop=stop_after_attempt(3),  # 最多重试3次
-    wait=wait_exponential(multiplier=1, min=2, max=10),  # 指数退避：2秒->4秒->8秒，最大10秒
-    reraise=True  # 失败时重新抛出原始异常
-)
-def get_hist_bar(**kwargs):
-    return ts.pro_bar(**kwargs)
+def get_trade_dates(start_date, end_date):
+    trade_cal_df = pro.trade_cal(exchange='', start_date=start_date, end_date=end_date, fields='cal_date,is_open')
+    return list(reversed(trade_cal_df[trade_cal_df['is_open'] == 1]['cal_date'].tolist()))  
+
 
 @retry(
     stop=stop_after_attempt(3),  # 最多重试3次
@@ -36,13 +33,13 @@ def get_hist_bar(**kwargs):
 def pro_bar(**kwargs):
     return ts.pro_bar(**kwargs)
 
-@retry(
-    stop=stop_after_attempt(3),  # 最多重试3次
-    wait=wait_exponential(multiplier=1, min=2, max=10),  # 指数退避：2秒->4秒->8秒，最大10秒
-    reraise=True  # 失败时重新抛出原始异常
-)
-def get_etf_daily(**kwargs):
-    return pro.fund_daily(**kwargs)
+# @retry(
+#     stop=stop_after_attempt(3),  # 最多重试3次
+#     wait=wait_exponential(multiplier=1, min=2, max=10),  # 指数退避：2秒->4秒->8秒，最大10秒
+#     reraise=True  # 失败时重新抛出原始异常
+# )
+# def get_etf_daily(**kwargs):
+#     return pro.fund_daily(**kwargs)
 
 #获取复权因子
 @retry(
@@ -52,27 +49,6 @@ def get_etf_daily(**kwargs):
 )
 def get_adj_factor(**kwargs):
     return pro.fund_adj(**kwargs)
-
-
-
-
-
-
-
-def get_trade_dates(start_date, end_date):
-    trade_cal_df = pro.trade_cal(exchange='', start_date=start_date, end_date=end_date, fields='cal_date,is_open')
-    return list(reversed(trade_cal_df[trade_cal_df['is_open'] == 1]['cal_date'].tolist()))  
-
-
-def get_all_stock_info():
-    df_stock_info = pro.stock_basic(exchange='', list_status='L', fields='ts_code,symbol,name,area,industry,list_date')
-    return df_stock_info[['ts_code','name']]
-
-
-def get_all_etf_info():
-    df_etf_info = pro.etf_basic(list_status='L', fields='ts_code,extname,index_code,index_name,exchange,mgr_name,list_date')
-    return df_etf_info[['ts_code','extname']].rename(columns={'extname':'name'})
-
 
 
 def _next_day(date_str: str) -> str:
@@ -196,7 +172,6 @@ class HandlerTushareBar:
             # 如果refresh=True，删除已存在的文件
             if refresh and os.path.exists(file_path):
                 os.remove(file_path)
-                print(f"删除已存在文件: {file_path}")
             
             # 增量：若文件已存在且未 refresh，则仅请求最后日期之后的区间
             last_date = None
@@ -205,7 +180,8 @@ class HandlerTushareBar:
                 try:
                     df_dates = pd.read_csv(file_path, usecols=['trade_date'])
                     if df_dates is not None and not df_dates.empty:
-                        last_date = str(df_dates['trade_date'].max()).replace('-', '')
+                        #tushare日期没有-，字典序max正确，其他api就不一定了
+                        last_date = str(df_dates['trade_date'].max())
                         symbol_trade_dates = [d for d in trade_dates if d >= last_date]
                         if len(symbol_trade_dates) <= 1:
                             print(f"{stock_name}({ts_code}) 已是最新，无需更新")
@@ -230,91 +206,86 @@ class HandlerTushareBar:
                 if self.asset:
                     other_kwargs['asset']=self.asset
                 
-                try:    
-                    df = self.fnc_data(
-                            ts_code=ts_code, 
-                            start_date=start_date_batch,
-                            end_date=end_date_exclusive,
-                            **other_kwargs
-                        )
+                df = self.fnc_data(
+                        ts_code=ts_code, 
+                        start_date=start_date_batch,
+                        end_date=end_date_exclusive,
+                        **other_kwargs
+                    )
+                
+
+                if df is not None and not df.empty: # 如果数据不为空，则保存到文件
+                    # 若为增量模式，过滤掉历史已存在日期（含 last_date 当日）
+                    if last_date is not None and 'trade_date' in df.columns:
+                        df = df[df['trade_date'].astype(str).str.replace('-', '') > last_date]
+                        if df.empty:
+                            print(f"  本批次全为历史数据，跳过保存")
+                            time.sleep(0.1)
+                            continue
+                    df['stock_name'] = stock_name
+                    df['ts_code'] = ts_code
+                    df.rename(columns={'vol':'volume'}, inplace=True)
                     
-
-                    if df is not None and not df.empty: # 如果数据不为空，则保存到文件
-                        # 若为增量模式，过滤掉历史已存在日期（含 last_date 当日）
-                        if last_date is not None and 'trade_date' in df.columns:
-                            df = df[df['trade_date'].astype(str).str.replace('-', '') > last_date]
-                            if df.empty:
-                                print(f"  本批次全为历史数据，跳过保存")
-                                time.sleep(0.1)
-                                continue
-                        df['stock_name'] = stock_name
-                        df['ts_code'] = ts_code
-                        df.rename(columns={'vol':'volume'}, inplace=True)
+                    # 强制复权处理
+                    if self.force_adj :
+                        # 获取复权因子
+                        adj_df = self.fnc_adj(
+                            ts_code=ts_code,
+                            start_date=start_date_batch,
+                            end_date=end_date_exclusive
+                        )
                         
-                        # 强制复权处理
-                        if self.force_adj :
+                        if adj_df is not None and not adj_df.empty:
+                            # 保存原始close为close_raw
+                            df['close_raw'] = df['close']
                             
-                            # 获取复权因子
-                            adj_df = self.fnc_adj(
-                                ts_code=ts_code,
-                                start_date=start_date_batch,
-                                end_date=end_date_exclusive
-                            )
-                            
-                            if adj_df is not None and not adj_df.empty:
-                                # 保存原始close为close_raw
-                                df['close_raw'] = df['close']
-                                
-                                # 合并复权因子数据
-                                df = df.merge(adj_df[['trade_date', 'adj_factor']], on='trade_date', how='left')
-                                # 为确保“最近”插补逻辑按时间顺序执行，按日期升序排序
-                                df.sort_values('trade_date', inplace=True)
-                                df.reset_index(drop=True, inplace=True)
+                            # 合并复权因子数据
+                            df = df.merge(adj_df[['trade_date', 'adj_factor']], on='trade_date', how='left')
+                            # 为确保“最近”插补逻辑按时间顺序执行，按日期升序排序
+                            df.sort_values('trade_date', inplace=True)
+                            df.reset_index(drop=True, inplace=True)
 
-                                # 检查是否有缺失的复权因子；若有，记录并用最近有效值插补
-                                if df['adj_factor'].isna().any():
-                                    missing_dates = df[df['adj_factor'].isna()]['trade_date'].tolist()
-                                    print(f"  错误: {ts_code} 在以下日期缺失复权因子: {missing_dates}")
-                                    self.adj_error_list.append({
-                                        'ts_code': ts_code,
-                                        'name': stock_name,
-                                        'reason': f'缺失复权因子，日期: {missing_dates}'
-                                    })
-
-                                    # 使用最近有效值（前后均可）的插补方式；两端也进行补全
-                                    df['adj_factor'] = pd.to_numeric(df['adj_factor'], errors='coerce')
-                                    df['adj_factor'] = df['adj_factor'].interpolate(method='nearest', limit_direction='both')
-
-                                # 若插补后仍存在缺失（例如整个区间都没有有效因子），则跳过该批次
-                                if df['adj_factor'].isna().any():
-                                    remaining_missing = df[df['adj_factor'].isna()]['trade_date'].tolist()
-                                    print(f"  错误: {ts_code} 插补后仍缺失复权因子，日期: {remaining_missing}，跳过该批次")
-                                    continue
-
-                                # 应用复权因子计算新的close价格
-                                df['close'] = df['close'] * df['adj_factor']
-                                print(f"  已应用复权因子到 {ts_code} 的close价格（含最近值插补处理）")
-                            else:
-                                print(f"  错误: 无法获取 {ts_code} 的复权因子数据")
+                            # 检查是否有缺失的复权因子；若有，记录并用最近有效值插补
+                            if df['adj_factor'].isna().any():
+                                missing_dates = df[df['adj_factor'].isna()]['trade_date'].tolist()
+                                print(f"  错误: {ts_code} 在以下日期缺失复权因子: {missing_dates}")
                                 self.adj_error_list.append({
                                     'ts_code': ts_code,
                                     'name': stock_name,
-                                    'reason': '无法获取复权因子数据'
+                                    'reason': f'缺失复权因子，日期: {missing_dates}'
                                 })
+
+                                # 使用最近有效值（前后均可）的插补方式；两端也进行补全
+                                df['adj_factor'] = pd.to_numeric(df['adj_factor'], errors='coerce')
+                                df['adj_factor'] = df['adj_factor'].interpolate(method='nearest', limit_direction='both')
+
+                            # 若插补后仍存在缺失（例如整个区间都没有有效因子），则跳过该批次
+                            if df['adj_factor'].isna().any():
+                                remaining_missing = df[df['adj_factor'].isna()]['trade_date'].tolist()
+                                print(f"  错误: {ts_code} 插补后仍缺失复权因子，日期: {remaining_missing}，跳过该批次")
                                 continue
-                                                     
-                        print(f"  获取到 {len(df)} 条数据，保存到 {file_path}")
-                        
-                        # 检查文件是否存在，决定是否写入header
-                        write_header = not os.path.exists(file_path)
-                        df.to_csv(file_path, mode='a', header=write_header, index=False)
-                        has_data = True
-                    else:
-                        print(f"  {ts_code} 本批次无数据")
-                    time.sleep(0.2)
-                except Exception as e:
-                    print(f"  获取 {ts_code} 数据失败: {str(e)}")
-                    continue
+
+                            # 应用复权因子计算新的close价格
+                            df['close'] = df['close'] * df['adj_factor']
+                            print(f"  已应用复权因子到 {ts_code} 的close价格（含最近值插补处理）")
+                        else:
+                            print(f"  错误: 无法获取 {ts_code} 的复权因子数据")
+                            self.adj_error_list.append({
+                                'ts_code': ts_code,
+                                'name': stock_name,
+                                'reason': '无法获取复权因子数据'
+                            })
+                            continue
+                                                    
+                    print(f"  获取到 {len(df)} 条数据，保存到 {file_path}")
+                    
+                    # 检查文件是否存在，决定是否写入header
+                    write_header = not os.path.exists(file_path)
+                    df.to_csv(file_path, mode='a', header=write_header, index=False)
+                    has_data = True
+                else:
+                    print(f"  {ts_code} 本批次无数据")
+                time.sleep(0.2)
             
             # 如果整个时间段都没有数据，记录到无数据列表
             if not has_data:
@@ -353,7 +324,7 @@ if __name__ == "__main__":
         fnc_adj=get_adj_factor
     )
 
-    handler_etf_daily.get_all_data(start_date='20140101', end_date=None, refresh=True) #end_date=None表示获取最新数据
+    handler_etf_daily.get_all_data(start_date='20140101', end_date=None, refresh=False) #end_date=None表示获取最新数据
 
 
     #ETF分钟线数据示例
