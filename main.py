@@ -67,6 +67,22 @@ def process_etf_daily():
     )
     handler_etf_daily.get_all_data(start_date='20150101', end_date=end_date, refresh=True)
 
+
+#下载所有同花顺板块的数据
+# def process_ths_concepts():
+#     end_date = datetime.now().strftime('%Y%m%d')
+#     handler_concept_daily = HandlerTushareBar(
+#         data_dir=os.path.join(DIR_DATA, 'stock_daily'),
+#         fq='hfq', 
+#         time_freq='D',
+#         api_limit=8000,
+#         fnc_info=get_all_stock_info,
+#         fnc_data=get_hist_bar
+#     )
+#     handler_concept_daily.get_all_data(start_date='20150101', end_date=end_date, refresh=True)
+
+
 if __name__=='__main__':
     #process_etf_daily()
-    process_stock_daily()
+    #process_stock_daily()
+    process_ths_concepts()
