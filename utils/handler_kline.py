@@ -4,7 +4,7 @@ import os,re,sys,time
 from datetime import datetime, timedelta
 from tenacity import retry, stop_after_attempt, wait_exponential
 import logging
-from config import DIR_DATA
+from utils.config import DIR_DATA
 
 # 设置日志
 logging.basicConfig(level=logging.INFO)
@@ -32,14 +32,6 @@ def get_trade_dates(start_date, end_date):
 )
 def pro_bar(**kwargs):
     return ts.pro_bar(**kwargs)
-
-# @retry(
-#     stop=stop_after_attempt(3),  # 最多重试3次
-#     wait=wait_exponential(multiplier=1, min=2, max=10),  # 指数退避：2秒->4秒->8秒，最大10秒
-#     reraise=True  # 失败时重新抛出原始异常
-# )
-# def get_etf_daily(**kwargs):
-#     return pro.fund_daily(**kwargs)
 
 #获取复权因子
 @retry(
@@ -72,6 +64,7 @@ class HandlerTushareBar:
         fnc_data: 获取数据的函数，必须返回DataFrame
         asset: 资产类型，默认None,适配pro_bar的参数
         force_adj: 是否强制获取复权因子，默认False
+        func_get_by_date: 按日期获取全市场数据的函数，用于fast_update，默认None
     ''' 
     def __init__(self,
                  data_dir, 
@@ -82,7 +75,8 @@ class HandlerTushareBar:
                  fnc_data=None,
                  fnc_adj=None, #获取复权因子的函数，默认None,适配pro_bar的参数
                  asset=None,
-                 force_adj=False #是否强制获取复权因子，默认False
+                 force_adj=False, #是否强制获取复权因子，默认False
+                 func_get_by_date=None #按日期获取全市场数据的函数，用于fast_update
                  ):
         if force_adj and not fnc_adj:
             raise ValueError("force_adj为True时，必须提供fnc_adj函数")
@@ -299,6 +293,126 @@ class HandlerTushareBar:
         # 保存无数据列表和复权错误列表
         self.save_no_data_list(start_date, end_date)
         self.save_adj_error_list(start_date, end_date)
+
+    def fast_update(self, days=5):
+        """
+        快速更新模式：获取全市场最近N天的数据，然后只更新已存在文件中缺失的日期
+        
+        参数:
+            days: 获取最近几天的数据，默认5天
+        """
+        if not self.func_get_by_date:
+            raise ValueError("func_get_by_date函数未设置，无法执行快速更新")
+            
+        print(f"开始快速更新模式，获取最近{days}天的数据...")
+        
+        # 1. 获取最近N个交易日
+        end_date = time.strftime('%Y%m%d')
+        start_date = (datetime.now() - timedelta(days=days)).strftime('%Y%m%d')  
+        trade_dates = get_trade_dates(start_date, end_date)
+        recent_dates = trade_dates[:days]  # 取最近N个交易日
+        print(f"最近{days}个交易日: {recent_dates}")
+        
+        # 2. 获取全市场这些日期的价格数据和复权因子
+        print("获取全市场数据...")
+        market_df_list = []
+        adj_df_list = []
+        
+        for date in recent_dates:
+            try:
+                # 获取价格数据
+                price_df = self.func_get_by_date(trade_date=date)
+                if price_df is not None and not price_df.empty:
+                    price_df.rename(columns={'vol': 'volume'}, inplace=True)
+                    market_df_list.append(price_df)
+                
+                # 获取复权因子
+                adj_df = pro.adj_factor(trade_date=date)
+                if adj_df is not None and not adj_df.empty:
+                    adj_df_list.append(adj_df)
+                
+                time.sleep(0.1)  # 避免API限制
+            except Exception as e:
+                print(f"获取{date}数据失败: {e}")
+                continue
+        
+        # 合并所有数据
+        if not market_df_list:
+            print("未获取到任何市场数据")
+            return
+            
+        market_data = pd.concat(market_df_list, ignore_index=True)
+        adj_data = pd.concat(adj_df_list, ignore_index=True) if adj_df_list else pd.DataFrame()
+        
+        # 合并价格和复权因子
+        if adj_data.empty:
+            raise ValueError("未获取到任何复权因子数据，无法进行快速更新")
+            
+        market_data = market_data.merge(adj_data[['ts_code', 'trade_date', 'adj_factor']], 
+                                      on=['ts_code', 'trade_date'], how='left')
+        
+        # 检查是否有缺失的复权因子
+        missing_adj = market_data[market_data['adj_factor'].isna()]
+        if not missing_adj.empty:
+            missing_info = missing_adj[['ts_code', 'trade_date']].drop_duplicates()
+            raise ValueError(f"以下股票缺失复权因子数据:\n{missing_info.to_string(index=False)}")
+        
+        # 计算后复权价格
+        for col in ['open', 'high', 'low', 'close', 'pre_close', 'change']:
+            market_data[col] = market_data[col] * market_data['adj_factor']
+        
+        print(f"获取到{len(market_data)}条市场数据")
+        
+        # 3. 遍历data_dir中的所有CSV文件并更新
+        if not os.path.exists(self.data_dir):
+            print(f"数据目录不存在: {self.data_dir}")
+            return
+            
+        csv_files = [f for f in os.listdir(self.data_dir) if f.endswith('.csv')]
+        print(f"找到{len(csv_files)}个CSV文件，开始检查缺失数据...")
+        
+        updated_count = 0
+        for csv_file in csv_files:
+            file_path = os.path.join(self.data_dir, csv_file)
+            ts_code = csv_file.replace('.csv', '')
+            
+            try:
+                # 读取现有数据，获取最新日期
+                df_existing = pd.read_csv(file_path)
+                if df_existing.empty:
+                    continue
+                    
+                # 获取股票名称和最新日期
+                stock_name = df_existing['stock_name'].iloc[0] if 'stock_name' in df_existing.columns else ts_code
+                latest_date = str(df_existing['trade_date'].max())
+                
+                # 筛选出该股票需要更新的数据
+                new_data = market_data[
+                    (market_data['ts_code'] == ts_code) & 
+                    (market_data['trade_date'].astype(str) > latest_date)
+                ].copy()
+                
+                if new_data.empty:
+                    continue  # 该文件已是最新，跳过
+                
+                print(f"更新 {stock_name}({ts_code}), 缺失{len(new_data)}条数据")
+                
+                # 添加股票名称并选择需要的列
+                new_data['stock_name'] = stock_name
+                columns = ['ts_code', 'trade_date', 'open', 'high', 'low', 'close', 
+                          'pre_close', 'change', 'pct_chg', 'volume', 'amount', 'stock_name']
+                new_data = new_data[columns]
+                
+                # 追加到文件
+                new_data.to_csv(file_path, mode='a', header=False, index=False)
+                print(f"  为 {ts_code} 新增了 {len(new_data)} 条数据")
+                updated_count += 1
+                    
+            except Exception as e:
+                print(f"处理文件 {csv_file} 时出错: {e}")
+                continue
+        
+        print(f"快速更新完成，共更新了 {updated_count} 个文件")
 
 
 

@@ -4,7 +4,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from datetime import datetime, timedelta
 
 from utils.handler_kline import HandlerTushareBar
-from config import DIR_DATA
+from utils.config import DIR_DATA
 
 _TS_TOKEN = os.getenv('TS_TOKEN')
 if not _TS_TOKEN:
@@ -32,9 +32,6 @@ def get_all_etf_info():
     return df_etf_info[['ts_code','extname']].rename(columns={'extname':'name'})
 
 
-def get_all_stock_info():
-    df_stock_info = pro.stock_basic(exchange='', list_status='L', fields='ts_code,symbol,name,area,industry,list_date')
-    return df_stock_info[['ts_code','name']]
 
 
 #下载/更新股票日线数据

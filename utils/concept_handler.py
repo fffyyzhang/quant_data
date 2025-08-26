@@ -2,7 +2,7 @@ import os,sys,json,re,random
 from datetime import datetime
 import pandas as pd
 
-from config import *
+from utils.config import *
 from handler_kline import HandlerTushareBar
 from tenacity import retry, stop_after_attempt, wait_exponential
 
