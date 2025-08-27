@@ -379,8 +379,10 @@ class HandlerTushareBar:
             try:
                 # 读取现有数据，获取最新日期
                 df_existing = pd.read_csv(file_path)
-                if df_existing.empty:
-                    continue
+                
+                #强制排序重写
+                df_existing.sort_values(by='trade_date', inplace=True, ascending=True)
+                df_existing.to_csv(file_path, index=False)
                     
                 # 获取股票名称和最新日期
                 stock_name = df_existing['stock_name'].iloc[0] if 'stock_name' in df_existing.columns else ts_code
@@ -394,8 +396,6 @@ class HandlerTushareBar:
                 
                 if new_data.empty:
                     continue  # 该文件已是最新，跳过
-                
-                print(f"更新 {stock_name}({ts_code}), 缺失{len(new_data)}条数据")
                 
                 # 添加股票名称并选择需要的列
                 new_data['stock_name'] = stock_name
@@ -429,16 +429,16 @@ if __name__ == "__main__":
     # handler_stock_daily.get_all_data(start_date='20150101', end_date='20250710', refresh=True)
     
     # ETF日线数据示例
-    handler_etf_daily = HandlerTushareBar(
-        data_dir=os.path.join(DIR_DATA, 'etf_daily'),
-        api_limit=2000,
-        fnc_info=get_all_etf_info,
-        fnc_data=get_etf_daily,
-        force_adj=True,
-        fnc_adj=get_adj_factor
-    )
+    # handler_etf_daily = HandlerTushareBar(
+    #     data_dir=os.path.join(DIR_DATA, 'etf_daily'),
+    #     api_limit=2000,
+    #     fnc_info=get_all_etf_info,
+    #     fnc_data=get_etf_daily,
+    #     force_adj=True,
+    #     fnc_adj=get_adj_factor
+    # )
 
-    handler_etf_daily.get_all_data(start_date='20140101', end_date=None, refresh=False) #end_date=None表示获取最新数据
+    # handler_etf_daily.get_all_data(start_date='20140101', end_date=None, refresh=False) #end_date=None表示获取最新数据
 
 
     #ETF分钟线数据示例
@@ -454,3 +454,5 @@ if __name__ == "__main__":
     #print(handler_etf_5min.get_batch_size())
 
     #handler_etf_5min.get_all_data(start_date='20140101', end_date='20250803', refresh=True)
+    
+    pass
