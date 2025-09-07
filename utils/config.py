@@ -1,6 +1,5 @@
 import os
 import subprocess
-import tushare as ts
 
 try:
     host = subprocess.getoutput('host $(hostname)')
@@ -13,8 +12,5 @@ except Exception:
 
 print(DIR_DATA)
 
-_TS_TOKEN = os.getenv('TS_TOKEN')
-if not _TS_TOKEN:
-    raise RuntimeError("环境变量 TS_TOKEN 未设置，请先在系统中导出 TS_TOKEN 再运行程序")
-ts.set_token(_TS_TOKEN)
-pro = ts.pro_api()
+# 注意：pro 对象已移到 apis.tushare_api_wrapper 中统一管理
+# 如果需要使用，请从 apis.tushare_api_wrapper import pro

@@ -1,9 +1,8 @@
 import os
 import pandas as pd
-import tushare as ts
-from utils.config import DIR_DATA, pro
 import time
-from tenacity import retry, stop_after_attempt, wait_exponential
+from utils.config import DIR_DATA
+from apis.tushare_api_wrapper import get_ths_index, get_ths_member
 
 
 class ConceptComponentHandler:
@@ -20,13 +19,13 @@ class ConceptComponentHandler:
         print("开始获取所有板块...")
         
         # 获取type=I的板块
-        concepts_i = pro.ths_index(type='I')
+        concepts_i = get_ths_index(type='I')
         print(f"获取到 type=I 板块数量: {len(concepts_i)}")
         
         time.sleep(0.2)  # API调用间隔
         
         # 获取type=N的板块  
-        concepts_n = pro.ths_index(type='N')
+        concepts_n = get_ths_index(type='N')
         print(f"获取到 type=N 板块数量: {len(concepts_n)}")
         
         # 合并两个类型的板块
@@ -35,16 +34,11 @@ class ConceptComponentHandler:
         
         return all_concepts
     
-    @retry(
-        stop=stop_after_attempt(3),  # 最多重试3次
-        wait=wait_exponential(multiplier=1, min=2, max=10),  # 指数退避：2秒->4秒->8秒，最大10秒
-        reraise=True  # 失败时重新抛出原始异常
-    )
     def get_concept_members(self, ts_code):
         """获取指定板块的成分股"""
-        members = pro.ths_member(ts_code=ts_code)
+        result = get_ths_member(ts_code=ts_code)
         time.sleep(0.1)  # API调用间隔
-        return members
+        return result
 
     
     def process_all_data(self):

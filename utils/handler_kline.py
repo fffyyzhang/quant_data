@@ -1,46 +1,25 @@
-import tushare as ts
 import pandas as pd
 import os,re,sys,time
 from datetime import datetime, timedelta
-from tenacity import retry, stop_after_attempt, wait_exponential
 import logging
 from utils.config import DIR_DATA
+from apis.tushare_api_wrapper import get_trade_dates, get_pro_bar, get_fund_adj, get_adj_factor as get_adj_factor_api
 
 # 设置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-_TS_TOKEN = os.getenv('TS_TOKEN')
-if not _TS_TOKEN:
-    raise RuntimeError("环境变量 TS_TOKEN 未设置，请先在系统中导出 TS_TOKEN 再运行程序")
-ts.set_token(_TS_TOKEN)
-pro = ts.pro_api()
-
 import warnings
 warnings.filterwarnings("ignore")
 
 
-def get_trade_dates(start_date, end_date):
-    trade_cal_df = pro.trade_cal(exchange='', start_date=start_date, end_date=end_date, fields='cal_date,is_open')
-    return list(reversed(trade_cal_df[trade_cal_df['is_open'] == 1]['cal_date'].tolist()))  
-
-
-@retry(
-    stop=stop_after_attempt(3),  # 最多重试3次
-    wait=wait_exponential(multiplier=1, min=2, max=10),  # 指数退避：2秒->4秒->8秒，最大10秒
-    reraise=True  # 失败时重新抛出原始异常
-)
+# 使用统一封装的函数
 def pro_bar(**kwargs):
-    return ts.pro_bar(**kwargs)
+    return get_pro_bar(**kwargs)
 
-#获取复权因子
-@retry(
-    stop=stop_after_attempt(3),  # 最多重试3次
-    wait=wait_exponential(multiplier=1, min=2, max=10),  # 指数退避：2秒->4秒->8秒，最大10秒
-    reraise=True  # 失败时重新抛出原始异常
-)
 def get_adj_factor(**kwargs):
-    return pro.fund_adj(**kwargs)
+    """获取复权因子"""
+    return get_fund_adj(**kwargs)
 
 
 def _next_day(date_str: str) -> str:
@@ -68,7 +47,7 @@ class HandlerTushareBar:
     ''' 
     def __init__(self,
                  data_dir, 
-                 fq=None, 
+                 fq='hfq', 
                  time_freq=None,
                  api_limit=None,
                  fnc_info=None,
@@ -327,7 +306,7 @@ class HandlerTushareBar:
                     market_df_list.append(price_df)
                 
                 # 获取复权因子
-                adj_df = pro.adj_factor(trade_date=date)
+                adj_df = get_adj_factor_api(trade_date=date)
                 if adj_df is not None and not adj_df.empty:
                     adj_df_list.append(adj_df)
                 

@@ -2,33 +2,20 @@ import os,sys,json,re,random
 from datetime import datetime
 import pandas as pd
 
-from utils.config import *
-from handler_kline import HandlerTushareBar
-from tenacity import retry, stop_after_attempt, wait_exponential
+from utils.config import DIR_DATA
+from utils.handler_kline import HandlerTushareBar
+from apis.tushare_api_wrapper import get_all_stock_info, get_ths_daily, get_daily
 
 
-def get_all_stock_info():
-    df_stock_info = pro.stock_basic(exchange='', list_status='L', fields='ts_code,symbol,name,area,industry,list_date')
-    return df_stock_info[['ts_code','name']]
-
-
-#日期约束获取单一标的数据
-@retry(
-    stop=stop_after_attempt(3),  # 最多重试3次
-    wait=wait_exponential(multiplier=1, min=2, max=10),  # 指数退避：2秒->4秒->8秒，最大10秒
-    reraise=True  # 失败时重新抛出原始异常
-)
+# 使用统一封装的函数，避免重复的重试装饰器代码
 def get_one_by_code(**kwargs):
-    return pro.ths_daily(**kwargs)
+    """日期约束获取单一标的数据"""
+    return get_ths_daily(**kwargs)
 
-#获取全市场数据
-@retry(
-    stop=stop_after_attempt(3),  # 最多重试3次
-    wait=wait_exponential(multiplier=1, min=2, max=10),  # 指数退避：2秒->4秒->8秒，最大10秒
-    reraise=True  # 失败时重新抛出原始异常
-)
+
 def get_data_all_market(**kwargs):
-    return pro.daily(**kwargs)
+    """获取全市场数据"""
+    return get_daily(**kwargs)
 
 
 def download_all():
@@ -53,10 +40,11 @@ def fast_update():
         fnc_data=get_one_by_code,
         func_get_by_date=get_data_all_market
     )
-    handler_concept_daily.fast_update(days=5)
+    handler_concept_daily.fast_update(days=20)
 
     
 
 
 if __name__ == '__main__':
-    fast_update()
+    #fast_update()
+    download_all()
