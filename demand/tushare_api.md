@@ -29,3 +29,6 @@ df = pro.ths_member(ts_code='885800.TI')
 0   885800.TI  000016.SZ  深康佳A
 1   885800.TI  000049.SZ  德赛电池
 
+# 获取ETF日线数据
+#获取”沪深300ETF华夏”ETF2025年以来的行情，并通过fields参数指定输出了部分字段
+df = pro.fund_daily(ts_code='510330.SH', start_date='20250101', end_date='20250618', fields='trade_date,open,high,low,close,vol,amount')

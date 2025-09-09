@@ -93,15 +93,37 @@ def get_trade_dates(start_date, end_date):
     trade_cal_df = get_trade_cal(exchange='', start_date=start_date, end_date=end_date, fields='cal_date,is_open')
     return list(reversed(trade_cal_df[trade_cal_df['is_open'] == 1]['cal_date'].tolist()))
 
+@with_retry
+def get_fund_basic(**kwargs):
+    """获取基金基础信息"""
+    return pro.fund_basic(**kwargs)
+
+@with_retry
+def get_fund_daily(**kwargs):
+    """获取基金日线行情"""
+    return pro.fund_daily(**kwargs)
+
+def get_all_etf_info():
+    """获取所有ETF基础信息"""
+    df = get_fund_basic(market='E')
+    return df[['ts_code', 'name']].copy()
+
+def get_etf_daily(**kwargs):
+    """获取ETF日线数据"""
+    return get_fund_daily(**kwargs)
+
 
 if __name__ == '__main__':
-    def test_get_pro_bar():
-        """测试 get_pro_bar 函数"""
-        # 取一只股票，取最近5天的日线
-        df = get_pro_bar(ts_code='000001.SZ', asset='E', freq='D', start_date='20240101', end_date='20240110')
-        print(df.head())
-        assert df is not None and not df.empty, "get_pro_bar 返回结果为空"
-        print("get_pro_bar 测试通过")
+    # def test_get_pro_bar():
+    #     """测试 get_pro_bar 函数"""
+    #     # 取一只股票，取最近5天的日线
+    #     df = get_pro_bar(ts_code='000001.SZ', asset='E', freq='D', start_date='20240101', end_date='20240110')
+    #     print(df.head())
+    #     assert df is not None and not df.empty, "get_pro_bar 返回结果为空"
+    #     print("get_pro_bar 测试通过")
         
-    test_get_pro_bar()
-    #print(get_all_concept_info())
+    # test_get_pro_bar()
+    # #print(get_all_concept_info())
+
+    print(get_etf_daily(ts_code='159241.SZ', start_date='20150105', end_date='20250825',fq='hfq'))
+    print(get_)

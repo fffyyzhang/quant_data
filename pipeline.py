@@ -6,18 +6,16 @@
 
 import os
 from datetime import datetime
-from utils.config import DIR_DATA
-#from utils.concept_handler import ConceptHandler
-from utils.concept_component_handler import ConceptComponentHandler
-from utils.handler_kline import HandlerTushareBar
+from config import DIR_DATA
+from utils.kline_downloader import DownloaderTushareBar
 from apis.tushare_api_wrapper import *
 
 # 数据配置
 DATA_CONFIGS = {
     'stock_daily': {
         'name': '股票日线数据',
-        'handler_class': HandlerTushareBar,
-        'handler_params': {
+        'downloader_class': DownloaderTushareBar,
+        'downloader_params': {
             'data_dir': os.path.join(DIR_DATA, 'stock_daily'),
             'api_limit': 3000,
             'fnc_info': get_all_stock_info,
@@ -26,10 +24,23 @@ DATA_CONFIGS = {
         },
         'support_fast_update': True
     },
+    'etf_daily': {
+        'name': 'ETF日线数据',
+        'downloader_class': DownloaderTushareBar,
+        'downloader_params': {
+            'data_dir': os.path.join(DIR_DATA, 'etf_daily'),
+            'api_limit': 2000,
+            'fnc_info': get_all_etf_info,
+            'fnc_data': get_etf_daily,
+            'force_adj': True,
+            'fnc_adj': get_fund_adj
+        },
+        'support_fast_update': True
+    },
     'concept_daily': {
         'name': '概念板块日线数据',
-        'handler_class': HandlerTushareBar,
-        'handler_params': {
+        'downloader_class': DownloaderTushareBar,
+        'downloader_params': {
             'data_dir': os.path.join(DIR_DATA, 'ths_concepts'),
             'api_limit': 3000,
             'fnc_info': get_all_concept_info,
@@ -39,11 +50,12 @@ DATA_CONFIGS = {
     },
     'concept_components': {
         'name': '概念板块成分股数据',
-        'handler_class': ConceptComponentHandler,
-        'handler_params': {},
+        'downloader_class': DownloaderTushareBar,
+        'downloader_params': {},
         'custom_method': 'process_all_data',
         'support_fast_update': False
-    }
+    },
+
 }
 
 
@@ -66,27 +78,27 @@ def pipeline(update_plan):
         
         try:
             # 创建处理器
-            handler = config['handler_class'](**config['handler_params'])
+            downloader = config['downloader_class'](**config['downloader_params'])
             
             if mode == 'fast' and config.get('support_fast_update'):
                 # 快速更新
-                handler.fast_update(days=20)
+                downloader.fast_update(days=20)
             elif mode == 'get_all':
                 # 全量下载
-                if hasattr(handler, 'get_all_data'):
+                if hasattr(downloader, 'get_all_data'):
                     end_date = datetime.now().strftime('%Y%m%d')
-                    handler.get_all_data(start_date='20150101', end_date=end_date, refresh=True)
+                    downloader.get_all_data(start_date='20150101', end_date=end_date, refresh=True)
                 elif config.get('custom_method'):
                     # 概念成分股等特殊数据
-                    getattr(handler, config['custom_method'])()
+                    getattr(downloader, config['custom_method'])()
             elif mode == 'incremental':
                 # 增量下载
-                if hasattr(handler, 'get_all_data'):
+                if hasattr(downloader, 'get_all_data'):
                     end_date = datetime.now().strftime('%Y%m%d')
-                    handler.get_all_data(start_date='20150101', end_date=end_date, refresh=False)
+                    downloader.get_all_data(start_date='20150101', end_date=end_date, refresh=False)
                 elif config.get('custom_method'):
                     # 概念成分股等特殊数据
-                    getattr(handler, config['custom_method'])()
+                    getattr(downloader, config['custom_method'])()
             else:
                 print(f"不支持的模式或数据类型: {data_type} - {mode}")
                 results[data_type] = False
@@ -119,9 +131,11 @@ def pipeline(update_plan):
 if __name__ == '__main__':
     # 定义每个数据类型的更新模式
     update_plan = {
-        'stock_daily': 'get_all',          # 股票数据快速更新
+        #'stock_daily': 'fast',          # 股票数据快速更新
+        'etf_daily': 'get_all',    # ETF日线数据全量下载
         # 'concept_daily': 'get_all', # 概念数据增量更新  
-        # 'concept_components': 'get_all'    # 概念成分股全量更新
+        # 'concept_components': 'get_all',    # 概念成分股全量更新
+
     }
         
     pipeline(update_plan)

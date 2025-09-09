@@ -1,9 +1,12 @@
+#用于下载不同时间颗粒度的k线数据，包含个股和ETF，支持fast_update和incremental更新
+#其中fast_update基于日期获取全市场数据，incremental基于ts_code获取数据，速度偏慢
+
+import logging
 import pandas as pd
 import os,re,sys,time
 from datetime import datetime, timedelta
-import logging
-from utils.config import DIR_DATA
-from apis.tushare_api_wrapper import get_trade_dates, get_pro_bar, get_fund_adj, get_adj_factor as get_adj_factor_api
+from config import DIR_DATA
+from apis.tushare_api_wrapper import *
 
 # 设置日志
 logging.basicConfig(level=logging.INFO)
@@ -30,7 +33,7 @@ def _next_day(date_str: str) -> str:
     return (d + timedelta(days=1)).strftime('%Y%m%d')
 
 
-class HandlerTushareBar:
+class DownloaderTushareBar:
     '''
         获取A股所有股票的复权K线数据，封装了通用的分批请求、断点续传、数据增量保存功能
         
@@ -185,7 +188,6 @@ class HandlerTushareBar:
                         end_date=end_date_exclusive,
                         **other_kwargs
                     )
-                
 
                 if df is not None and not df.empty: # 如果数据不为空，则保存到文件
                     # 若为增量模式，过滤掉历史已存在日期（含 last_date 当日）
