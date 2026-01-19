@@ -22,8 +22,8 @@ pro = ts.pro_api()
 def with_retry(func):
     """为函数添加重试机制的装饰器"""
     return retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=2, max=20),
         reraise=True
     )(func)
 
@@ -74,6 +74,31 @@ def get_ths_member(**kwargs):
     """获取同花顺概念板块成分"""
     return pro.ths_member(**kwargs)
 
+@with_retry
+def get_ths_hot_concept(**kwargs):
+    """获取同花顺热点概念板块"""
+    return  pro.ths_hot(market='概念板块', **kwargs)
+
+@with_retry
+def get_ths_hot_stocks(**kwargs):
+    """获取同花顺热股,数据从20230820开始"""
+    return  pro.ths_hot(market='热股', **kwargs)
+
+@with_retry
+def get_fund_basic(**kwargs):
+    """获取基金基础信息"""
+    return pro.fund_basic(**kwargs)
+
+@with_retry
+def get_fund_daily(**kwargs):
+    """获取基金日线行情"""
+    return pro.fund_daily(**kwargs)
+
+@with_retry
+def get_daily_basic(**kwargs):
+    """获取个股每日基本信息行情，如流通市值、市盈率、市净率、股息率等"""
+    return pro.daily_basic(**kwargs)
+
 # ===== 便捷函数 =====
 
 def get_all_stock_info():
@@ -93,15 +118,7 @@ def get_trade_dates(start_date, end_date):
     trade_cal_df = get_trade_cal(exchange='', start_date=start_date, end_date=end_date, fields='cal_date,is_open')
     return list(reversed(trade_cal_df[trade_cal_df['is_open'] == 1]['cal_date'].tolist()))
 
-@with_retry
-def get_fund_basic(**kwargs):
-    """获取基金基础信息"""
-    return pro.fund_basic(**kwargs)
 
-@with_retry
-def get_fund_daily(**kwargs):
-    """获取基金日线行情"""
-    return pro.fund_daily(**kwargs)
 
 def get_all_etf_info():
     """获取所有ETF基础信息"""
@@ -111,6 +128,17 @@ def get_all_etf_info():
 def get_etf_daily(**kwargs):
     """获取ETF日线数据"""
     return get_fund_daily(**kwargs)
+
+def get_concept_components(**kwargs):
+    """获取概念板块成分（包装函数，忽略日期参数）"""
+    # 只使用 ts_code 参数，忽略日期相关参数
+    ts_code = kwargs.get('ts_code')
+    if not ts_code:
+        return None
+    return get_ths_member(ts_code=ts_code)
+
+
+
 
 
 if __name__ == '__main__':
@@ -125,5 +153,6 @@ if __name__ == '__main__':
     # test_get_pro_bar()
     # #print(get_all_concept_info())
 
-    print(get_etf_daily(ts_code='159241.SZ', start_date='20150105', end_date='20250825',fq='hfq'))
-    print(get_)
+    #print(get_etf_daily(ts_code='159241.SZ', start_date='20150105', end_date='20250825',fq='hfq'))
+    #print(get_)
+    print(get_ths_hot_stocks(trade_date='20250815'))
