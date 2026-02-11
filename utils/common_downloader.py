@@ -41,6 +41,9 @@ class CommonDownloader:
     
     def _save_csv(self, df: pd.DataFrame, file_path: str, mode: str = 'w'):
         """保存CSV文件"""
+        dir_path = os.path.dirname(file_path)
+        if dir_path:
+            os.makedirs(dir_path, exist_ok=True)
         write_header = mode == 'w' or not os.path.exists(file_path)
         df.to_csv(file_path, mode=mode, header=write_header, index=False, encoding='utf-8-sig')
     
@@ -272,6 +275,7 @@ class CommonDownloader:
             mode: 获取模式，'by_code'（按标的遍历）或 'by_date'（按日期遍历）
             **kwargs: 传递给数据获取函数的额外参数
         """
+        os.makedirs(self.data_dir, exist_ok=True)
         if mode == 'by_code':
             if self.centralized:
                 return self.get_by_code_centralized(start_date, end_date, refresh, **kwargs)

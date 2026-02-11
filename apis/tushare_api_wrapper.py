@@ -10,6 +10,7 @@ import pandas as pd
 import tushare as ts
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+
 # 初始化 Tushare
 _TS_TOKEN = os.getenv('TS_TOKEN')
 if not _TS_TOKEN:
@@ -28,6 +29,11 @@ def with_retry(func):
     )(func)
 
 # ===== 项目中用到的 Tushare API 封装 =====
+
+@with_retry
+def get_index_daily(**kwargs):
+    """获取指数日线"""
+    return pro.index_daily(**kwargs)
 
 @with_retry
 def get_stock_basic(**kwargs):
@@ -106,6 +112,21 @@ def get_all_stock_info():
     df_stock_info = get_stock_basic(exchange='', list_status='L', fields='ts_code,symbol,name,area,industry,list_date')
     return df_stock_info[['ts_code', 'name']]
 
+
+def get_all_index_info():
+    """获取所有指数基础信息"""
+    #df_index_info = get_index_basic(market='CSI')
+    data=[
+        {'ts_code': '000985.CSI', 'name': '中证全指'},
+        {'ts_code': '000001.SH', 'name': '上证指数'},
+        {'ts_code': '399006.SZ', 'name': '创业板指'},
+        {'ts_code': '000688.SH', 'name': '科创50'},
+    ]
+    df_index_info = pd.DataFrame(data)
+    
+    return df_index_info
+
+
 def get_all_concept_info():
     """获取所有概念板块信息"""
     df1 = get_ths_index(exchange="A", type='I')
@@ -155,4 +176,8 @@ if __name__ == '__main__':
 
     #print(get_etf_daily(ts_code='159241.SZ', start_date='20150105', end_date='20250825',fq='hfq'))
     #print(get_)
-    print(get_ths_hot_stocks(trade_date='20250815'))
+    #print(get_ths_hot_stocks(trade_date='20250815'))
+    
+    df=get_all_stock_info()
+    #df=get_all_concept_info()
+    d=1

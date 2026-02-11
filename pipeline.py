@@ -26,7 +26,7 @@ DATA_CONFIGS = {
             'fq':'hfq'
         },
         'download_params': {
-            'refresh': True,
+            'refresh': False,
             'start_date': '20140101',
         },
         'support_fast_update': True
@@ -55,7 +55,26 @@ DATA_CONFIGS = {
             'fnc_data': get_ths_daily
         },
         'download_params': {
-            'refresh': False
+            #默认fields会遗漏total_mv和float_mv
+            'refresh': True,
+            'start_date': '20140101',
+            'fields':'ts_code, trade_date, close, open, high, low, pre_close, avg_price, change, pct_change, vol, turnover_rate, total_mv, float_mv',
+        },
+        'support_fast_update': False
+    },
+    'index_daily': {
+        'name': '指数日线数据',
+        'downloader_class': DownloaderTushareBar,
+        'class_params': {
+            'data_dir': os.path.join(DIR_DATA, 'index_daily'),
+            'api_limit': 8000,
+            'fnc_info': get_all_index_info,
+            'fnc_data': get_index_daily,
+            'fq': None,
+        },
+        'download_params': {
+            'refresh': False,
+            'start_date': '20140101',
         },
         'support_fast_update': False
     },
@@ -135,12 +154,13 @@ DATA_CONFIGS = {
             'data_name': '板块成分',
             'func_get_symbols': get_all_concept_info,
             'func_get_by_code': get_concept_components,
-            'primary_key': 'ts_code',
-            'date_field': None,
-            'additional_fields': []
+            #'primary_key': 'ts_code',
+            'centralized': True,
+            'date_field': None
         },
         'download_params': {
-            'refresh': False
+            'refresh': True,
+            'start_date': '20140101',
         },
         'support_fast_update': False
     },
@@ -150,12 +170,15 @@ DATA_CONFIGS = {
         'class_params': {
             'data_dir': os.path.join(DIR_DATA, 'adj_factor_stock'),
             'data_name': '复权因子',
+            'func_get_symbols': get_all_stock_info,
             'func_get_by_date': get_adj_factor,
             'date_field': 'trade_date',
             'centralized': True
         },
         'download_params': {
-            'refresh': False
+            'refresh': False,
+            'start_date': '20140101',
+            'mode': 'by_date',
         },
         'support_fast_update': True
     },
@@ -289,17 +312,18 @@ def pipeline(update_plan):
 if __name__ == '__main__':
     # 定义每个数据类型的更新模式
     update_plan = {
-        #'adj_factor_stock': 'get_all',
-        #'adj_factor_etf': 'get_all',
+        'adj_factor_stock': 'get_all',
+        'adj_factor_etf': 'get_all',
         'stock_daily': 'get_all',          # 股票数据快速更新
-        #'etf_daily': 'get_all',    # ETF日线数据全量下载
-        #'concept_daily': 'get_all', # 概念数据增量更新  
-        #'concept_components': 'get_all',    # 概念成分股全量更新
-        #'stock_1m': 'get_all',              # 股票1分钟K线数据(2024-2025年)
-        #'stock_30min_binary': 'get_all',     # 股票30分钟数据(二进制)
-        #'daily_basic': 'get_all',  #基本信息，市值，市盈率，市净率，股息率等
-        #"ths_hot_concept": "get_all",
-        #"ths_hot_stocks": "get_all",
+        'etf_daily': 'get_all',    # ETF日线数据全量下载
+        'concept_daily': 'get_all', # 概念数据增量更新  
+        'concept_components': 'get_all',    # 概念成分股全量更新
+        # 'stock_1m': 'get_all',              # 股票1分钟K线数据(2024-2025年)
+        # 'stock_30min_binary': 'get_all',     # 股票30分钟数据(二进制)
+        'daily_basic': 'get_all',  #基本信息，市值，市盈率，市净率，股息率等
+        "ths_hot_concept": "get_all",
+        "ths_hot_stocks": "get_all",
+        'index_daily': 'get_all',
     }
         
     pipeline(update_plan)

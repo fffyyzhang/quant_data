@@ -165,6 +165,7 @@ class DownloaderTushareBar:
                         other_kwargs['adj']=self.fq
                     if self.asset:
                         other_kwargs['asset']=self.asset
+                    other_kwargs['fields']=kwargs.get('fields',None)
                     
                     df = self.fnc_data(
                             ts_code=ts_code, 
